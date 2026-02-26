@@ -1,0 +1,276 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum TripRole {
+  ADMIN     // Creador del viaje - control total
+  EDITOR    // Puede agregar panoramas y gastos, no puede borrar viaje
+  VIEWER    // Solo lectura
+}
+
+enum ParticipantType {
+  REGISTERED // Usuario registrado invitado
+  GHOST      // Nombre fantasma temporal para divisiones de gastos
+}
+
+enum Currency {
+  CLP // Peso Chileno
+  JPY // Yen Japonés
+  USD // Dólar Americano
+  EUR // Euro
+  GBP // Libra Esterlina
+  KRW // Won Coreano
+  CNY // Yuan Chino
+  THB // Baht Tailandés
+}
+
+// ============================================================================
+// USER & AUTHENTICATION
+// ============================================================================
+
+model User {
+  id                    String           @id @default(cuid())
+  email                 String           @unique
+  emailVerified         DateTime?
+  name                  String?
+  image                 String?
+  googleId              String?          @unique
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  // NextAuth required relations
+  accounts              Account[]
+  sessions              Session[]
+
+  // Relations
+  createdTrips          Trip[]           @relation("CreatedTrips")
+  tripParticipations    TripParticipant[] @relation("UserParticipant")
+  expenses              Expense[]        @relation("ExpenseCreatedBy")
+
+  @@index([email])
+  @@index([googleId])
+}
+
+// ============================================================================
+// NEXTAUTH REQUIRED MODELS
+// ============================================================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================================
+// TRIPS & PARTICIPANTS
+// ============================================================================
+
+model Trip {
+  id                    String           @id @default(cuid())
+  name                  String
+  description           String?
+  destination           String?
+  startDate             DateTime
+  endDate               DateTime
+  defaultCurrency       Currency         @default(CLP)
+  createdById           String
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  
+  // Relations
+  createdBy             User             @relation("CreatedTrips", fields: [createdById], references: [id], onDelete: Cascade)
+  participants          TripParticipant[]
+  activities            Activity[]
+  hotels                Hotel[]
+  expenses              Expense[]
+  payments              Payment[]
+
+  @@index([createdById])
+  @@index([startDate, endDate])
+}
+
+model TripParticipant {
+  id                    String           @id @default(cuid())
+  tripId                String
+  userId                String?          // NULL si es participante fantasma
+  name                  String           // Nombre del participante (usuario registrado o fantasma)
+  type                  ParticipantType  @default(GHOST)
+  role                  TripRole         @default(VIEWER)
+  joinedAt              DateTime         @default(now())
+  
+  // Relations
+  trip                  Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  user                  User?            @relation("UserParticipant", fields: [userId], references: [id], onDelete: SetNull)
+  expenseParticipants   ExpenseParticipant[]
+  paidExpenses          Expense[]        @relation("ExpensePaidBy")
+  paymentsMade          Payment[]        @relation("PaymentsFrom")
+  paymentsReceived      Payment[]        @relation("PaymentsTo")
+
+  @@unique([tripId, userId]) // Un usuario no puede ser participante dos veces en el mismo viaje
+  @@index([tripId])
+  @@index([userId])
+}
+
+// ============================================================================
+// ITINERARY - ACTIVITIES/PANORAMAS
+// ============================================================================
+
+model Activity {
+  id                    String           @id @default(cuid())
+  tripId                String
+  title                 String
+  description           String?
+  location              String?
+  notes                 String?
+  activityDate          DateTime?        // Fecha del panorama (opcional)
+  activityTime          DateTime?        // Hora del panorama (opcional)
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  
+  // Relations
+  trip                  Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  
+  @@index([tripId])
+  @@index([activityDate])
+}
+
+// ============================================================================
+// HOTELS - INFORMATIONAL/BUDGET
+// ============================================================================
+
+model Hotel {
+  id                    String           @id @default(cuid())
+  tripId                String
+  name                  String
+  link                  String?
+  checkInDate           DateTime
+  checkOutDate          DateTime
+  pricePerNight         Float?           // Precio por noche (opcional)
+  totalPrice            Float?           // Precio total (opcional)
+  numberOfNights        Int              // Calculado automáticamente
+  currency              Currency         @default(CLP)
+  notes                 String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  
+  // Relations
+  trip                  Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  
+  @@index([tripId])
+  @@index([checkInDate, checkOutDate])
+}
+
+// ============================================================================
+// EXPENSES & PAYMENTS (Splitwise-style)
+// ============================================================================
+
+model Expense {
+  id                    String           @id @default(cuid())
+  tripId                String
+  createdById           String
+  paidByParticipantId   String?          // Quién pagó (TripParticipant)
+  description           String
+  amount                Float
+  currency              Currency         @default(CLP)
+  expenseDate           DateTime         @default(now())
+  splitType             SplitType        @default(EQUAL) // EQUAL o CUSTOM
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  // Relations
+  trip                  Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  createdBy             User             @relation("ExpenseCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  paidBy                TripParticipant? @relation("ExpensePaidBy", fields: [paidByParticipantId], references: [id], onDelete: SetNull)
+  participants          ExpenseParticipant[]
+
+  @@index([tripId])
+  @@index([createdById])
+  @@index([paidByParticipantId])
+  @@index([expenseDate])
+}
+
+enum SplitType {
+  EQUAL  // División equitativa entre todos los participantes
+  CUSTOM // División personalizada (montos específicos para cada participante)
+}
+
+model ExpenseParticipant {
+  id                    String           @id @default(cuid())
+  expenseId             String
+  participantId         String
+  amount                Float            // Monto que debe pagar este participante
+  
+  // Relations
+  expense               Expense          @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  participant           TripParticipant  @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  
+  @@unique([expenseId, participantId])
+  @@index([expenseId])
+  @@index([participantId])
+}
+
+// ============================================================================
+// PAYMENTS / SETTLEMENTS (Registro de pagos entre participantes)
+// ============================================================================
+
+model Payment {
+  id                    String           @id @default(cuid())
+  tripId                String
+  fromParticipantId     String           // Quién paga (deudor)
+  toParticipantId       String           // A quién le paga (acreedor)
+  amount                Float
+  currency              Currency
+  paidAt                DateTime         @default(now())
+  createdAt             DateTime         @default(now())
+
+  // Relations
+  trip                  Trip             @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  fromParticipant       TripParticipant  @relation("PaymentsFrom", fields: [fromParticipantId], references: [id], onDelete: Cascade)
+  toParticipant         TripParticipant  @relation("PaymentsTo", fields: [toParticipantId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+  @@index([fromParticipantId])
+  @@index([toParticipantId])
+}

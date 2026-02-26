@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: unko-trip-db
+    environment:
+      POSTGRES_USER: unko_user
+      POSTGRES_PASSWORD: unko_password
+      POSTGRES_DB: unko_trip_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - unko-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unko_user -d unko_trip_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+
+networks:
+  unko-network:
+    driver: bridge
