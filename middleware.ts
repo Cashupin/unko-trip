@@ -1,5 +1,6 @@
-import { auth } from '@/lib/auth';
 import { NextResponse } from 'next/server';
+import { getToken } from 'next-auth/jwt';
+import type { NextRequest } from 'next/server';
 
 // Rutas públicas que no necesitan autenticación
 const publicRoutes = [
@@ -8,8 +9,12 @@ const publicRoutes = [
   '/auth/error',
 ];
 
-export async function middleware(request: any) {
-  const session = await auth();
+export async function middleware(request: NextRequest) {
+  const token = await getToken({ 
+    req: request, 
+    secret: process.env.NEXTAUTH_SECRET 
+  });
+  
   const { pathname } = request.nextUrl;
 
   // Allow public routes
@@ -18,7 +23,7 @@ export async function middleware(request: any) {
   }
 
   // Redirect to signin if not authenticated and trying to access protected route
-  if (!session?.user) {
+  if (!token) {
     const signinUrl = new URL('/auth/signin', request.url);
     signinUrl.searchParams.set('callbackUrl', pathname);
     return NextResponse.redirect(signinUrl);

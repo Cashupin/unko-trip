@@ -2,7 +2,7 @@ import { getServerSession } from 'next-auth';
 import Google from 'next-auth/providers/google';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from './prisma';
-import type { Session, User } from 'next-auth';
+import type { NextAuthOptions, Session } from 'next-auth';
 
 const googleId = process.env.GOOGLE_ID;
 const googleSecret = process.env.GOOGLE_SECRET;
@@ -16,8 +16,11 @@ if (!nextAuthSecret) {
   console.warn('NEXTAUTH_SECRET is not set.');
 }
 
-export const authConfig = {
+export const authConfig: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
+  session: {
+    strategy: 'jwt', // <- ESTO ES CLAVE PARA EL MIDDLEWARE
+  },
   providers: [
     Google({
       clientId: googleId || '',
@@ -30,14 +33,19 @@ export const authConfig = {
     error: '/auth/error',
   },
   callbacks: {
-    async session({ session, user }: { session: Session; user: User }) {
-      if (session.user) {
-        (session.user as any).id = user.id;
+    async jwt({ token, user }) {
+      if (user) {
+        token.sub = user.id;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user && token.sub) {
+        (session.user as any).id = token.sub;
       }
       return session;
     },
   },
-  trustHost: true,
   secret: nextAuthSecret,
 };
 
@@ -45,5 +53,3 @@ export const authConfig = {
 export async function auth() {
   return getServerSession(authConfig);
 }
-
-
